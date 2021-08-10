@@ -104,7 +104,7 @@ end
 
 const α_MIN = 1.0e-3
 const α_MAX = 1.0e8
-const β_MIN = 1.0e-2
+const β_MIN = 0.5
 const β_MAX = 100.0
 
 # Lookup table for initial guess of shape parameter β.
