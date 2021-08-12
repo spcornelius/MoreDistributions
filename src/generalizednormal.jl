@@ -102,21 +102,67 @@ function rand(rng::AbstractRNG, d::GeneralizedNormal)
     return rand(rng, sampler(d))
 end
 
-const α_MIN = 1.0e-3
+const α_MIN = 1.0e-6
 const α_MAX = 1.0e8
-const β_MIN = 1.0e-2
+const β_MIN = 1.0e-3
 const β_MAX = 100.0
 
 # Lookup table for initial guess of shape parameter β.
 # Used in fit_mle.
-const β₀_range = collect(β_MIN:0.001:β_MAX)
+const β₀_range = collect(β_MIN:0.0001:β_MAX)
 const outputs = map(β -> loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β),
                     β₀_range)
 const lookup_tbl = hcat(β₀_range, outputs)[sortperm(outputs), :]
 
+# gradient of log likelihood function w.r.t. parameters Θ, for the sample x
+@inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
+    β⁻¹ = 1/β
+    n = length(x)
+
+    #y = x[x .!= μ]
+    ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
+    ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
+    ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
+                sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
+    return ℒ′
+end
+
+# expected Fisher information matrix
+@inbounds function update_ℐ!(ℐ, μ, α, β)
+    β⁻¹ = 1/β
+
+    ###################
+    # diagonal elements
+    ###################
+
+    # Fill ℐ_μ with a dummy value of 1 if β ≤ 1, as Γ(2-β⁻¹)
+    # can't be evaluated at β = 1. Doesn't matter anyway, as
+    # μ is not updated via Newton iteration when β ≤ 1.
+    ℐ_μ = β > 1 ? β^2/(Γ(β⁻¹)*α^2)*Γ(2-β⁻¹) : 1.0
+    ℐ_α = β/α^2
+
+    # diagonal element for β is a long expression; split calculation
+    c1 = β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1)
+    c2 = β⁻¹^2*ψ₀(1 + β⁻¹)
+    c3 = β⁻¹^2* Γ(2 + β⁻¹)/Γ(β⁻¹) * (ψ₀(2 + β⁻¹)^2 + ψ₁(2 + β⁻¹))
+
+    ℐ_β = c1^2 - 2*c1*c2 + c3
+
+    # lone nonzero off-diagonal element
+    ℐ_αβ = β⁻¹^2/α*ψ₀(1 + β⁻¹) -
+           β⁻¹/α*(1 + β⁻¹)*ψ₀(2 + β⁻¹)
+
+    fill!(ℐ, 0.0)
+    ℐ[1, 1] = ℐ_μ
+    ℐ[2, 2] = ℐ_α
+    ℐ[3, 3] = ℐ_β
+    ℐ[2, 3] = ℐ[3, 2] = ℐ_αβ
+    return ℐ
+end
 
 function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
-                 maxiters::Integer=100, tol::Real=1e-6) where {T <: Real}
+                 maxiters::Integer=1000, tol::Real=1e-6,
+                 γ=0.1) where {T <: Real}
     n = length(x)
     # following Varanasi & Aazhang (1989)
 
@@ -132,7 +178,12 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
 
     # Must be equal to loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β).
     # Use to find β₀ via precomputed lookup table.
-    β = lookup_tbl[searchsortedfirst(view(lookup_tbl, :, 2), c), 1]
+    i = searchsortedfirst(view(lookup_tbl, :, 2), c)
+    if i > length(lookup_tbl)
+        β = β_MAX
+    else
+        β = lookup_tbl[i, 1]
+    end
 
     # relation between scale parameter α and variance
     α = sqrt(σ²*Γ(1/β)/Γ(3/β))
@@ -150,45 +201,6 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
     ℐ = zeros(3, 3)
     ℒ′ = zeros(3)
 
-    # gradient of log likelihood function w.r.t. parameters Θ, for the sample x
-    @inbounds function update_ℒ′!()
-        β⁻¹ = 1/β
-        n = length(x)
-
-        ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
-        ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
-        ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
-                    sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
-        return ℒ′
-    end
-
-    # expected Fisher information matrix
-    @inbounds function update_ℐ!()
-        β⁻¹ = 1/β
-
-        # diagonal elements
-        ℐ_μ = β^2/(Γ(β⁻¹)*α^2)*Γ(2-β⁻¹)
-        ℐ_α = β/α^2
-
-        # diagonal element for β is a long expression; split calculation
-        c1 = β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1)
-        c2 = β⁻¹^2*ψ₀(1 + β⁻¹)
-        c3 = β⁻¹^2* Γ(2 + β⁻¹)/Γ(β⁻¹) * (ψ₀(2 + β⁻¹)^2 + ψ₁(2 + β⁻¹))
-
-        ℐ_β = c1^2 - 2*c1*c2 + c3
-
-        # lone nonzero off-diagonal element
-        ℐ_αβ = β⁻¹^2/α*ψ₀(1 + β⁻¹) -
-               β⁻¹/α*(1 + β⁻¹)*ψ₀(2 + β⁻¹)
-
-        fill!(ℐ, 0.0)
-        ℐ[1, 1] = ℐ_μ
-        ℐ[2, 2] = ℐ_α
-        ℐ[3, 3] = ℐ_β
-        ℐ[2, 3] = ℐ[3, 2] = ℐ_αβ
-        return ℐ
-    end
-
     @inbounds for _ in 1:maxiters
         # modified method for β < 1
         # use median as estimator for μ
@@ -196,8 +208,8 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
             μ = m
         end
 
-        update_ℒ′!()
-        update_ℐ!()
+        update_ℒ′!(ℒ′, x, μ, α, β)
+        update_ℐ!(ℐ, μ, α, β)
 
         # newton step (With hand-coded inverse of Fisher matrix)
         c =  ℐ[2, 2]*ℐ[3, 3] - ℐ[2, 3]^2
@@ -205,9 +217,9 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
             ℒ′[1] = zero(T)
         end
 
-        μ += ℒ′[1]/ℐ[1, 1]/n
-        α += (ℐ[3, 3]*ℒ′[2] - ℐ[2, 3]*ℒ′[3])/c/n
-        β += (ℐ[2, 2]*ℒ′[3] - ℐ[2, 3]*ℒ′[2])/c/n
+        μ += γ * ℒ′[1]/ℐ[1, 1]/n
+        α += γ * (ℐ[3, 3]*ℒ′[2] - ℐ[2, 3]*ℒ′[3])/c/n
+        β += γ * (ℐ[2, 2]*ℒ′[3] - ℐ[2, 3]*ℒ′[2])/c/n
 
         α = clamp(α, α_MIN, α_MAX)
         β = clamp(β, β_MIN, β_MAX)
@@ -216,6 +228,5 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
             break
         end
     end
-
     GeneralizedNormal{T}(μ, α, β)
 end # fit_mle
