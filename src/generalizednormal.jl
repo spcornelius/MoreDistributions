@@ -1,6 +1,6 @@
 const Γ = gamma
 const ψ₀ = digamma
-const ψ₁ = trigamma
+# const ψ₁ = trigamma
 
 struct GeneralizedNormal{T<:Real} <: ContinuousUnivariateDistribution
     μ::T
@@ -20,7 +20,7 @@ GeneralizedNormal(μ::Real, α::Real, β::Real) = GeneralizedNormal(promote(μ, 
 GeneralizedNormal(μ::Integer, α::Integer, β::Integer) = GeneralizedNormal(float(μ), float(α), float(β))
 
 # standard GeneralizedNormal (mean 0, variance 1) with shape parameter β
-GeneralizedNormal(β::T) where {T <: Real} = GeneralizedNormal(zero(T), T(sqrt(Γ(1/β)/Γ(3/β))), β)
+GeneralizedNormal(β::T) where {T <: Real} = GeneralizedNormal(zero(T), sqrt(Γ(1/β)/Γ(3/β)), β)
 
 # standard normal
 GeneralizedNormal() = GeneralizedNormal(2.0)
@@ -102,67 +102,67 @@ function rand(rng::AbstractRNG, d::GeneralizedNormal)
     return rand(rng, sampler(d))
 end
 
-const α_MIN = 1.0e-6
-const α_MAX = 1.0e8
-const β_MIN = 1.0e-3
+const α_MIN = 1.0e-16
+# const α_MAX = 1.0e8
+const β_MIN = 1.0e-6
 const β_MAX = 100.0
+const dβ = 0.001
 
 # Lookup table for initial guess of shape parameter β.
 # Used in fit_mle.
-const β₀_range = collect(β_MIN:0.0001:β_MAX)
+const β₀_range = collect(β_MIN:dβ:β_MAX)
 const outputs = map(β -> loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β),
                     β₀_range)
 const lookup_tbl = hcat(β₀_range, outputs)[sortperm(outputs), :]
 
 # gradient of log likelihood function w.r.t. parameters Θ, for the sample x
-@inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
-    β⁻¹ = 1/β
-    n = length(x)
-
-    #y = x[x .!= μ]
-    ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
-    ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
-    ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
-                sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
-    return ℒ′
-end
+# @inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
+#     β⁻¹ = 1/β
+#     n = length(x)
+#
+#     #y = x[x .!= μ]
+#     ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
+#     ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
+#     ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
+#                 sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
+#     return ℒ′
+# end
 
 # expected Fisher information matrix
-@inbounds function update_ℐ!(ℐ, μ, α, β)
-    β⁻¹ = 1/β
+# @inbounds function update_ℐ!(ℐ, μ, α, β)
+#     β⁻¹ = 1/β
+#
+#     ###################
+#     # diagonal elements
+#     ###################
+#
+#     # Fill ℐ_μ with a dummy value of 1 if β ≤ 1, as Γ(2-β⁻¹)
+#     # can't be evaluated at β = 1. Doesn't matter anyway, as
+#     # μ is not updated via Newton iteration when β ≤ 1.
+#     ℐ_μ = β > 1 ? β^2/(Γ(β⁻¹)*α^2)*Γ(2-β⁻¹) : 1.0
+#     ℐ_α = β/α^2
+#
+#     # diagonal element for β is a long expression; split calculation
+#     c1 = β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1)
+#     c2 = β⁻¹^2*ψ₀(1 + β⁻¹)
+#     c3 = β⁻¹^2* Γ(2 + β⁻¹)/Γ(β⁻¹) * (ψ₀(2 + β⁻¹)^2 + ψ₁(2 + β⁻¹))
+#
+#     ℐ_β = c1^2 - 2*c1*c2 + c3
+#
+#     # lone nonzero off-diagonal element
+#     ℐ_αβ = β⁻¹^2/α*ψ₀(1 + β⁻¹) -
+#            β⁻¹/α*(1 + β⁻¹)*ψ₀(2 + β⁻¹)
+#
+#     fill!(ℐ, 0.0)
+#     ℐ[1, 1] = ℐ_μ
+#     ℐ[2, 2] = ℐ_α
+#     ℐ[3, 3] = ℐ_β
+#     ℐ[2, 3] = ℐ[3, 2] = ℐ_αβ
+#     return ℐ
+# end
 
-    ###################
-    # diagonal elements
-    ###################
 
-    # Fill ℐ_μ with a dummy value of 1 if β ≤ 1, as Γ(2-β⁻¹)
-    # can't be evaluated at β = 1. Doesn't matter anyway, as
-    # μ is not updated via Newton iteration when β ≤ 1.
-    ℐ_μ = β > 1 ? β^2/(Γ(β⁻¹)*α^2)*Γ(2-β⁻¹) : 1.0
-    ℐ_α = β/α^2
-
-    # diagonal element for β is a long expression; split calculation
-    c1 = β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1)
-    c2 = β⁻¹^2*ψ₀(1 + β⁻¹)
-    c3 = β⁻¹^2* Γ(2 + β⁻¹)/Γ(β⁻¹) * (ψ₀(2 + β⁻¹)^2 + ψ₁(2 + β⁻¹))
-
-    ℐ_β = c1^2 - 2*c1*c2 + c3
-
-    # lone nonzero off-diagonal element
-    ℐ_αβ = β⁻¹^2/α*ψ₀(1 + β⁻¹) -
-           β⁻¹/α*(1 + β⁻¹)*ψ₀(2 + β⁻¹)
-
-    fill!(ℐ, 0.0)
-    ℐ[1, 1] = ℐ_μ
-    ℐ[2, 2] = ℐ_α
-    ℐ[3, 3] = ℐ_β
-    ℐ[2, 3] = ℐ[3, 2] = ℐ_αβ
-    return ℐ
-end
-
-function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
-                 maxiters::Integer=1000, tol::Real=1e-6,
-                 γ=0.1) where {T <: Real}
+function guess_initial_params(x::AbstractVector{T}) where {T <: Real}
     n = length(x)
     # following Varanasi & Aazhang (1989)
 
@@ -188,45 +188,46 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
     # relation between scale parameter α and variance
     α = sqrt(σ²*Γ(1/β)/Γ(3/β))
 
-    # make sure α, β are in a rough range for numerical stability of
-    # (poly)gamma functions as implemented in SpecialFunctions
-    α = clamp(α, α_MIN, α_MAX)
-    β = clamp(β, β_MIN, β_MAX)
+    return [μ, α, β]
+end
 
-    # Step 2: perform a newton step to polish the moment-method parameter
-    # estimates
-    m = median(x)
+@inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
+    # gradient of (normalized) log-likelihood w.r.t. the parameters
+    β⁻¹ = 1/β
+    n = length(x)
 
-    # cache for fit_mle linear solving
-    ℐ = zeros(3, 3)
-    ℒ′ = zeros(3)
+    ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
+    ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
+    ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
+             sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
+    ℒ′ ./= n
+    return ℒ′
+end
 
-    @inbounds for _ in 1:maxiters
-        # modified method for β < 1
-        # use median as estimator for μ
-        if β ≤ 1
-            μ = m
-        end
+function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
+                 algorithm::Symbol=:LD_MMA,
+                 xtol_rel::Real=1.0e-8) where {T <: Real}
+    n = length(x)
 
-        update_ℒ′!(ℒ′, x, μ, α, β)
-        update_ℐ!(ℐ, μ, α, β)
+    # Step 1: Get inital guesses for all parameters using moment matching
+    p₀ = guess_initial_params(x)
 
-        # newton step (With hand-coded inverse of Fisher matrix)
-        c =  ℐ[2, 2]*ℐ[3, 3] - ℐ[2, 3]^2
-        if β ≤ 1
-            ℒ′[1] = zero(T)
-        end
-
-        μ += γ * ℒ′[1]/ℐ[1, 1]/n
-        α += γ * (ℐ[3, 3]*ℒ′[2] - ℐ[2, 3]*ℒ′[3])/c/n
-        β += γ * (ℐ[2, 2]*ℒ′[3] - ℐ[2, 3]*ℒ′[2])/c/n
-
-        α = clamp(α, α_MIN, α_MAX)
-        β = clamp(β, β_MIN, β_MAX)
-
-        if norm(ℒ′, Inf) < tol
-            break
-        end
+    function obj(p, grad)
+        update_ℒ′!(grad, x, p...)
+        d = GeneralizedNormal(p...)
+        return sum(@~ @. logpdf(d, x))/n
     end
-    GeneralizedNormal{T}(μ, α, β)
+
+    opt = Opt(algorithm, 3)
+    opt.upper_bounds = [Inf, Inf, Inf]
+    opt.lower_bounds = [-Inf, α_MIN, β_MIN]
+    opt.max_objective = obj
+    opt.xtol_rel = xtol_rel
+
+    ℒ_max, p, ret = optimize(opt, p₀)
+    if ret ∉ (:SUCCESS, :XTOL_REACHED, :FTOL_REACHED)
+        error("Numerical optimization failed.")
+    end
+
+    GeneralizedNormal{T}(p...)
 end # fit_mle
