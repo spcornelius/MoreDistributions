@@ -219,7 +219,7 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
     end
 
     opt = Opt(algorithm, 3)
-    opt.upper_bounds = [Inf, Inf, Inf]
+    opt.upper_bounds = [Inf, Inf, β_MAX]
     opt.lower_bounds = [-Inf, α_MIN, β_MIN]
     opt.max_objective = obj
     opt.xtol_rel = xtol_rel
