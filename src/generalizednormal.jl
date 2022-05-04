@@ -215,8 +215,10 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
     p₀ = guess_initial_params(x)
 
     function obj(p, grad)
-        update_ℒ′!(grad, x, p...)
-        d = GeneralizedNormal(p...)
+        if length(grad) > 0
+            update_ℒ′!(grad, x, p...)
+        end
+        d = GeneralizedNormal(p...; check_args=false)
         return sum(@~ @. logpdf(d, x))/n
     end
 
