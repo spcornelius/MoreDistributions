@@ -1,7 +1,8 @@
 module MoreDistributions
 
 using Distributions, LinearAlgebra, LazyArrays, SpecialFunctions, StatsBase,
-      Random, NLopt
+      Random, NLopt, UnPack
+using Distributions: @quantile_newton, quantile_newton, quantile_bisect
 
 # functions to extend
 import Base: convert, rand, maximum, minimum, extrema
@@ -28,6 +29,7 @@ import Distributions:
 
 export
     GeneralizedNormal, GeneralizedNormalSampler,
+    BodyTailGeneralizedNormal,
 
     mean, median, quantile, std, var, cov, cor,
 
@@ -115,5 +117,6 @@ export
     gradlogpdf          # gradient (or derivative) of logpdf(d,x) wrt x
 
 include("generalizednormal.jl")
+include("bodytail.jl")
 
 end # module

@@ -207,28 +207,27 @@ end
 end
 
 function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
-                 algorithm::Symbol=:LD_MMA,
-                 xtol_rel::Real=1.0e-8) where {T <: Real}
+                 reltol::Real=1.0e-6) where {T <: Real}
     n = length(x)
 
     # Step 1: Get inital guesses for all parameters using moment matching
     p₀ = guess_initial_params(x)
 
     function obj(p, grad)
-        if length(grad) > 0
-            update_ℒ′!(grad, x, p...)
-        end
+        # if length(grad) > 0
+        #    update_ℒ′!(grad, x, p...)
+        # end
         d = GeneralizedNormal(p...; check_args=false)
         return sum(@~ @. logpdf(d, x))/n
     end
 
-    opt = Opt(algorithm, 3)
-    opt.upper_bounds = [Inf, Inf, β_MAX]
-    opt.lower_bounds = [-Inf, α_MIN, β_MIN]
+    opt = Opt(:LN_NEWUOA_BOUND, 3)
+    opt.lower_bounds = [-Inf, 0., 0.]
+    opt.upper_bounds = [Inf, Inf, Inf]
     opt.max_objective = obj
-    opt.xtol_rel = xtol_rel
+    opt.xtol_rel = reltol
 
-    ℒ_max, p, ret = optimize(opt, p₀)
+    _, p, ret = optimize(opt, p₀)
     if ret ∉ (:SUCCESS, :XTOL_REACHED, :FTOL_REACHED)
         error("Numerical optimization failed.")
     end
