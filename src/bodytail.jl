@@ -1,11 +1,3 @@
-const Γ = gamma
-
-# NON-normalized upper incomplete gamma function
-@inline function Γ_inc_upper(a, x)
-    _, q = gamma_inc(a, x)
-    return Γ(a) * q
-end
-
 struct BodyTailGeneralizedNormal{T<:Real} <: ContinuousUnivariateDistribution
     μ::T
     σ::T
@@ -70,59 +62,141 @@ function cdf(d::BodyTailGeneralizedNormal, x::Real)
     return 1/2 - sign(z)*(c - 1/2)
 end
 
-# @quantile_newton BodyTailGeneralizedNormal
-
 function quantile(d::BodyTailGeneralizedNormal, p::Real)
     if p == 0.5
         return mode(d)
     end
+    # distribution is symmetric around μ, so focus on finding
+    # a root of cdf(x) = p for x > μ (i.e., p > 0.5) and flip to the
+    # other side later if necessary
     s = sign(p - 0.5)
     if p < 0.5
         p = 1 - p
     end
-    lb = 0.0
-    ub = std(d)
+
+    # if p > 0.5, then the associated quantile x will satisfy cdf(μ, x) < p
+    # so find an upper bound for x, i.e. a pt where cdf(ub) > p. Then x
+    # will be somewhere in the range [μ, ub]
+    lb = d.μ
+    s = std(d)
+    ub = lb + s
     while cdf(d, ub) < p
-        ub *= 2
+        ub += s
     end
-    return s * quantile_bisect(d, p, lb, ub)
+    return s * quantile_bisect(d, p, lb, ub) + (1 - s) * d.μ
 end
 
+@inline gamma_inc_upper(a, x) = gamma_inc(a, x)[2]
+
 function fit_mle(::Type{<:BodyTailGeneralizedNormal}, x::AbstractVector{T};
+                 alg = :LN_NEWUOA,
                  reltol::Real=1.0e-6) where {T <: Real}
 
     μ₀ = mean(x)
-    α₀ = β₀ = 1.0
+
+    # s² = var(x)
+    # k = kurtosis(x) + 3
+    # mean_z_abs = mean(@~ @. abs((x - μ₀)/sqrt(s²)))
+    # mean_x_abs = mean(@~ @. abs(x - μ₀))
+
+    # function f(F, q)
+    #     log_σ, log_α, log_β = q
+    #     σ = exp(log_σ)
+    #     α = exp(log_α)
+    #     β = exp(log_β)
+
+    #     g1 = gamma((α + 1)/β)
+    #     g2 = gamma((α + 2)/β)
+    #     g3 = gamma((α + 3)/β)
+    #     g5 = gamma((α + 5)/β)
+    #     F[1] = σ^2 * g3 / 3 / g1 - s²
+    #     F[2] = 9 * g1 * g5 / 5 / g3^2 - k
+    #     F[3] = σ^2 * g2 / 2 / g1 - mean_x_abs
+    # end
+
+    α₀ = 2.0
+    β₀ = 2.0
     σ₀ = sqrt(3*var(x)*gamma((α₀ + 1)/β₀)/gamma((α₀ + 3)/β₀))
 
-    n = length(x)
-    y = similar(x)
+    # res = nlsolve(f, [log(σ₀), log(α₀), log(β₀)])
+    # res = nlsolve(f, [0.0, 0.0, 0.0])
 
-    function log_likelihood(p)
-        μ, σ, α, β = p
-        s = 0
-        @. y = abs((x - μ)/σ)^β
+    # @show res
+    # log_σ₀, log_α₀, log_β₀ = res.zero
 
-        a = α/β
-        @inbounds for i=1:n
-            _, q = gamma_inc(a, y[i])
-            s += log(q)
+    # caches for intermediate results common between log-likelihood
+    # and its gradient
+    z = similar(x)
+    z_abs = similar(x)
+    z_absβ = similar(x)
+    z_absα = similar(x)
+    log_z_abs = similar(x)
+    Γ = similar(x)
+    y1 = similar(x)
+    y2 = similar(x)
+    y3 = similar(x)
+
+    function objective(p, grad)
+        μ, log_σ, log_α, log_β = p
+
+        σ = exp(log_σ)
+        α = exp(log_α)
+        β = exp(log_β)
+
+        c1 = α/β
+        c2 = (α + 1.)/β
+        c3 = c1 + 1.
+        c4 = gamma(c1)
+
+        # parameters for hypergeoemtric function
+        a = [c1, c1]
+        b = [c3, c3]
+
+        # according to Mathematica, this is equivalent to G(x), where G is the Meijer-G 
+        # function with m = 3, n = 0, p = 2, q = 3 and parameters a = [1, 1], b = [0, 0, α/β]
+        # (as of this coding, there is no direct way to evaluate the Meijer-G function in Julia)
+        ψ1 = digamma(c1)
+        A(x) = x^c1 * pFq(a, b, -x) / c1^2 + c4 * (ψ1 - log(x))
+
+        @. z = (x - μ)/σ
+        @. z_abs = abs(z)
+        @. z_absβ = z_abs^β
+        @. Γ = gamma_inc_upper(c1, z_absβ)
+
+        obj =  mean(@~ @. log(Γ)) + loggamma(c1) - log(2) - log(σ) - loggamma(c2)
+
+        if length(grad) > 0
+            @. log_z_abs = log(z_abs)
+            @. z_absα = z_abs^α
+            @. y1 = Γ * c4
+            @. y2 = A(z_absβ) / y1
+            @. y3 = exp(-z_absβ) / y1
+
+            ψ2 = digamma(c2)
+
+            grad[1] = β / σ * mean(@~ @. sign(z) * z_abs^(α - 1) * y3)
+
+            # extra factors of σ, α, and β in these are to correct for the fact that
+            # we're working in log-space
+            grad[2] = σ * (β * mean(@~ @. z_absα * y3) - 1) / σ
+            grad[3] = α * (mean(@~ @. log_z_abs + y2 / β) - ψ2 / β)
+            grad[4] = β * (mean(@~ @. -log_z_abs * (c1 + z_absα * y3) - c1 * y2/β) + (c2 * ψ2)/β)
         end
-        s /= n
 
-        return s - log(2) - log(σ) - loggamma((α+1)/β) + loggamma(α/β)
+        return obj
     end
 
-    opt = Opt(:LN_NEWUOA_BOUND, 4)
-    opt.lower_bounds = [-Inf, 0., 0., 0.]
-    opt.upper_bounds = [Inf, Inf, Inf, Inf]
+    opt = Opt(alg, 4)
     opt.xtol_rel = reltol
-    opt.max_objective = (p, grad) -> log_likelihood(p)
-
-    _, p, ret = optimize(opt, [μ₀, σ₀, α₀, β₀])
+    opt.max_objective = objective
+  
+    _, p, ret = optimize(opt, [μ₀, log(σ₀), log(α₀), log(β₀)])
     if ret ∉ (:SUCCESS, :XTOL_REACHED, :FTOL_REACHED)
         error("Numerical optimization failed.")
     end
-    
-    BodyTailGeneralizedNormal{T}(p...)
+    μ = p[1]
+    σ = exp(p[2])
+    α = exp(p[3])
+    β = exp(p[4])
+    BodyTailGeneralizedNormal{T}(μ, σ, α, β)
 end

@@ -1,6 +1,5 @@
 const Γ = gamma
 const ψ₀ = digamma
-# const ψ₁ = trigamma
 
 struct GeneralizedNormal{T<:Real} <: ContinuousUnivariateDistribution
     μ::T
@@ -163,7 +162,6 @@ const lookup_tbl = hcat(β₀_range, outputs)[sortperm(outputs), :]
 #     return ℐ
 # end
 
-
 function guess_initial_params(x::AbstractVector{T}) where {T <: Real}
     n = length(x)
     # following Varanasi & Aazhang (1989)
@@ -193,38 +191,65 @@ function guess_initial_params(x::AbstractVector{T}) where {T <: Real}
     return [μ, α, β]
 end
 
-@inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
-    # gradient of (normalized) log-likelihood w.r.t. the parameters
-    β⁻¹ = 1/β
-    n = length(x)
+# gradient of (normalized) log-likelihood w.r.t. the parameters
+# μ, log_α, and log_β
+# function update_ℒ′!(ℒ′, x, μ, log_α, log_β)
+#     α = exp(log_α)
+#     β = exp(log_β)
 
-    ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
-    ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
-    ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
-             sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
-    ℒ′ ./= n
-    return ℒ′
-end
+#     β⁻¹ = 1/β
+#     n = length(x)
+
+#     ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
+#     ℒ′[2] = exp(α) * (β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α)
+#     ℒ′[3] = exp(β) * (n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
+#              sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α)))
+#     ℒ′ ./= n
+#     return ℒ′
+# end
 
 function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
-                 reltol::Real=1.0e-6) where {T <: Real}
+                 alg = :LN_NEWUOA,
+                 reltol::Real = 1.0e-6) where {T <: Real}
     n = length(x)
 
     # Step 1: Get inital guesses for all parameters using moment matching
     p₀ = guess_initial_params(x)
 
-    function obj(p, grad)
-        # if length(grad) > 0
-        #    update_ℒ′!(grad, x, p...)
-        # end
-        d = GeneralizedNormal(p...; check_args=false)
-        return sum(@~ @. logpdf(d, x))/n
+    # work in log-space for the parameters α, β
+    # that way, all parameters are unbounded (between -Inf and +Inf)
+    p₀[2:3] .= log.(p₀[2:3])
+
+    y = similar(x)
+    yβ = similar(x)
+
+    function objective(p, grad)
+        μ, log_α, log_β = p
+        α = exp(log_α)
+        β = exp(log_β)
+        β⁻¹ = 1/β
+        
+        @. y = abs(x - μ)/α
+        @. yβ = y^β
+        mean_yβ = mean(yβ)
+
+        obj = log(β/2α) - loggamma(1/β) - mean_yβ
+
+        if length(grad) > 0
+            grad[1] = β/α * mean(@~ @. sign(x - μ) * y^(β-1))
+
+            # extra factors of α, and β in these are to correct for the fact that
+            # we're working in log-space
+            grad[2] = α * (β/α * mean_yβ - 1/α)
+            grad[3] = β * (β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) - mean(@~ @. yβ * log(y)))
+        end
+
+        # (normalized) log-likelihood
+        return obj
     end
 
-    opt = Opt(:LN_NEWUOA_BOUND, 3)
-    opt.lower_bounds = [-Inf, 0., 0.]
-    opt.upper_bounds = [Inf, Inf, Inf]
-    opt.max_objective = obj
+    opt = Opt(alg, 3)
+    opt.max_objective = objective
     opt.xtol_rel = reltol
 
     _, p, ret = optimize(opt, p₀)
@@ -232,5 +257,8 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
         error("Numerical optimization failed.")
     end
 
-    GeneralizedNormal{T}(p...)
+    μ = p[1]
+    α = exp(p[2])
+    β = exp(p[3])
+    GeneralizedNormal{T}(μ, α, β)
 end # fit_mle
