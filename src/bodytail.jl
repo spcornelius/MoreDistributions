@@ -46,9 +46,11 @@ var(d::BodyTailGeneralizedNormal) = d.σ^2*Γ((d.α + 3)/d.β)/(3 * Γ((d.α + 1
 skewness(d::BodyTailGeneralizedNormal{T}) where {T <: Real} = zero(T)
 kurtosis(d::BodyTailGeneralizedNormal) = 9*Γ((d.α + 1)/d.β)*Γ((d.α + 5)/d.β)/(5*Γ((d.α + 3)/d.β)^2) - 3
 
+@inline gamma_inc_upper(a, x) = gamma_inc(a, x)[2]
+
 function pdf(d::BodyTailGeneralizedNormal, x::Real)
     (μ, σ, α, β) = params(d)
-    return Γ_inc_upper(α/β, abs((x - μ)/σ)^β)/(2*σ*Γ((α + 1)/β))
+    return gamma_inc_upper(α/β, abs((x - μ)/σ)^β)/(2*σ*Γ((α + 1)/β))
 end
 
 function cdf(d::BodyTailGeneralizedNormal, x::Real)
@@ -58,7 +60,7 @@ function cdf(d::BodyTailGeneralizedNormal, x::Real)
     z_abs_β = z_abs^β
     a1  = (α + 1)/β
     a2 = α/β
-    c = (Γ_inc_upper(a1, z_abs_β) - z_abs * Γ_inc_upper(a2, z_abs_β))/(2 * Γ(a1))
+    c = (gamma_inc_upper(a1, z_abs_β) - z_abs * gamma_inc_upper(a2, z_abs_β))/(2 * Γ(a1))
     return 1/2 - sign(z)*(c - 1/2)
 end
 
@@ -85,8 +87,6 @@ function quantile(d::BodyTailGeneralizedNormal, p::Real)
     end
     return s * quantile_bisect(d, p, lb, ub) + (1 - s) * d.μ
 end
-
-@inline gamma_inc_upper(a, x) = gamma_inc(a, x)[2]
 
 function fit_mle(::Type{<:BodyTailGeneralizedNormal}, x::AbstractVector{T};
                  alg = :LN_NEWUOA,
