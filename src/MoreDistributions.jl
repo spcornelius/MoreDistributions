@@ -1,7 +1,7 @@
 module MoreDistributions
 
 using Distributions, LinearAlgebra, LazyArrays, SpecialFunctions, StatsBase,
-      Random, NLsolve, UnPack, HypergeometricFunctions
+      Random, NLopt, UnPack, HypergeometricFunctions
 using Distributions: @quantile_newton, quantile_newton, quantile_bisect
 
 # functions to extend
