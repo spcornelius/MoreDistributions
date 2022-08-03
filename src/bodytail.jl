@@ -50,7 +50,7 @@ kurtosis(d::BodyTailGeneralizedNormal) = 9*Γ((d.α + 1)/d.β)*Γ((d.α + 5)/d.�
 
 function pdf(d::BodyTailGeneralizedNormal, x::Real)
     (μ, σ, α, β) = params(d)
-    return gamma_inc_upper(α/β, abs((x - μ)/σ)^β)/(2*σ*Γ((α + 1)/β))
+    return gamma_inc_upper(α/β, abs((x - μ)/σ)^β)/(2*σ*Γ((α + 1)/β)) * gamma(α/β)
 end
 
 function cdf(d::BodyTailGeneralizedNormal, x::Real)
@@ -60,7 +60,7 @@ function cdf(d::BodyTailGeneralizedNormal, x::Real)
     z_abs_β = z_abs^β
     a1  = (α + 1)/β
     a2 = α/β
-    c = (gamma_inc_upper(a1, z_abs_β) - z_abs * gamma_inc_upper(a2, z_abs_β))/(2 * Γ(a1))
+    c = (gamma_inc_upper(a1, z_abs_β) - z_abs * gamma_inc_upper(a2, z_abs_β) * gamma(a2))/2
     return 1/2 - sign(z)*(c - 1/2)
 end
 
