@@ -210,7 +210,8 @@ end
 
 function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
                  alg = :LN_NEWUOA,
-                 reltol::Real = 1.0e-6) where {T <: Real}
+                 xtol_rel::Real = 1.0e-8,
+                 ftol_rel::Real = 1.0e-8) where {T <: Real}
     n = length(x)
 
     # Step 1: Get inital guesses for all parameters using moment matching
@@ -250,7 +251,8 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
 
     opt = Opt(alg, 3)
     opt.max_objective = objective
-    opt.xtol_rel = reltol
+    opt.xtol_rel = xtol_rel
+    opt.ftol_rel = ftol_rel
 
     _, p, ret = optimize(opt, p₀)
     if ret ∉ (:SUCCESS, :XTOL_REACHED, :FTOL_REACHED)

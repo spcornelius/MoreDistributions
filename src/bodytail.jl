@@ -155,7 +155,8 @@ end
 
 function fit_mle(::Type{<:BodyTailGeneralizedNormal}, x::AbstractVector{T};
                  alg = :LN_NEWUOA,
-                 reltol::Real=1.0e-6) where {T <: Real}
+                 xtol_rel::Real=1.0e-8,
+                 ftol_rel::Real=1.0e-8) where {T <: Real}
 
     μ₀ = mean(x)
 
@@ -166,7 +167,8 @@ function fit_mle(::Type{<:BodyTailGeneralizedNormal}, x::AbstractVector{T};
     cache = BTGNFitCache(x)
 
     opt = Opt(alg, 4)
-    opt.xtol_rel = reltol
+    opt.xtol_rel = xtol_rel
+    opt.ftol_rel = ftol_rel
     opt.max_objective = (p, grad) -> btgn_fit_objective(p, grad, x, cache)
 
     _, p, ret = optimize(opt, [μ₀, log(σ₀), log(α₀), log(β₀)])
