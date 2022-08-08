@@ -6,6 +6,7 @@ using SpecialFunctions
 
 @testset "GeneralizedNormal" begin
     μ = -1.2
+    Δ = 2.77
 
     for β in [0.7, 1.5, 2.3]
         d = GeneralizedNormal(μ, sqrt(2), β)
@@ -25,7 +26,12 @@ using SpecialFunctions
         @test 0.5 === cdf(d, μ)
         @test 1.0 === cdf(d, Inf)
         @test 0.0 === cdf(d, -Inf)
+
+        x = rand(d)
+        @test isa(x, Float64)
+        @test isapprox(cdf(d, μ - Δ), 1 - cdf(d, μ + Δ))
     end
+
 end
 
 @testset "GeneralizedNormal β = 2" begin
@@ -82,7 +88,7 @@ end
     x = rand(GeneralizedNormal(4.6, 2.0, 0.55), 10^5)
 
     algs = (:LN_NEWUOA, :LN_NELDERMEAD, :LN_COBYLA, :LN_PRAXIS)
-    @time p = collect((params(fit_mle(GeneralizedNormal, x, alg=alg)) for alg in algs))
+    p = collect((params(fit_mle(GeneralizedNormal, x, alg=alg)) for alg in algs))
     μ, α, β = collect(zip(p...))
     
     @test all(isapprox.(maximum(μ), minimum(μ), rtol=1e-3))
