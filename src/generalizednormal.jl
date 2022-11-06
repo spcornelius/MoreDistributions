@@ -27,13 +27,15 @@ GeneralizedNormal(β::T) where {T <: Real} = GeneralizedNormal(zero(T), sqrt(Γ(
 GeneralizedNormal() = GeneralizedNormal(2.0)
 
 # #### Conversions
-convert(::Type{GeneralizedNormal{T}}, μ::S, α::S, β::S) where {T <: Real, S <: Real} = GeneralizedNormal(T(μ), T(α), T(β))
-convert(::Type{GeneralizedNormal{T}}, d::GeneralizedNormal{S}) where {T <: Real, S <: Real} = GeneralizedNormal(T(d.μ), T(d.α), T(d.β))
+convert(::Type{GeneralizedNormal{T}}, μ::S, α::S, β::S) where 
+    {T <: Real, S <: Real} = GeneralizedNormal(T(μ), T(α), T(β))
+convert(::Type{GeneralizedNormal{T}}, d::GeneralizedNormal{S}) where 
+    {T <: Real, S <: Real} = GeneralizedNormal(T(d.μ), T(d.α), T(d.β))
 
 @distr_support GeneralizedNormal -Inf Inf
 
 params(d::GeneralizedNormal) = (d.μ, d.α, d.β)
-@inline partype(d::GeneralizedNormal{T}) where {T<:Real} = T
+@inline partype(::GeneralizedNormal{T}) where {T<:Real} = T
 
 location(d::GeneralizedNormal) = d.μ
 scale(d::GeneralizedNormal) = d.α
@@ -46,7 +48,7 @@ mode(d::GeneralizedNormal) = d.μ
 
 var(d::GeneralizedNormal) = d.α^2*Γ(3/d.β)/Γ(1/d.β)
 
-skewness(d::GeneralizedNormal{T}) where {T<:Real} = zero(T)
+skewness(::GeneralizedNormal{T}) where {T<:Real} = zero(T)
 kurtosis(d::GeneralizedNormal) = Γ(5/d.β)*Γ(1/d.β)/Γ(3/d.β)^2 - 3
 
 isleptokurtic(d::GeneralizedNormal) = d.β < 2
@@ -82,7 +84,8 @@ function quantile(d::GeneralizedNormal, p::Real)
     μ + c * α * gamma_inc_inv(1/β, y, 1-y)^(1/β)
 end
 
-struct GeneralizedNormalSampler{S<:Sampleable{Univariate,Continuous}, T<:Real} <: Sampleable{Univariate,Continuous}
+struct GeneralizedNormalSampler{S<:Sampleable{Univariate,Continuous}, 
+                                T<:Real} <: Sampleable{Univariate,Continuous}
     gs::S # gamma sampler
     β::T
     μ::T
@@ -103,70 +106,20 @@ function rand(rng::AbstractRNG, d::GeneralizedNormal)
     return rand(rng, sampler(d))
 end
 
-const α_MIN = 1.0e-16
-# const α_MAX = 1.0e8
+# range of β for lookup table
 const β_MIN = 1.0e-6
 const β_MAX = 100.0
 const dβ = 0.001
 
 # Lookup table for initial guess of shape parameter β.
-# Used in fit_mle.
 const β₀_range = collect(β_MIN:dβ:β_MAX)
 const outputs = map(β -> loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β),
                     β₀_range)
-const lookup_tbl = hcat(β₀_range, outputs)[sortperm(outputs), :]
+const β_lookup_tbl = hcat(β₀_range, outputs)[sortperm(outputs), :]
 
-# gradient of log likelihood function w.r.t. parameters Θ, for the sample x
-# @inbounds function update_ℒ′!(ℒ′, x, μ, α, β)
-#     β⁻¹ = 1/β
-#     n = length(x)
-#
-#     #y = x[x .!= μ]
-#     ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
-#     ℒ′[2] = β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α
-#     ℒ′[3] = n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
-#                 sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α))
-#     return ℒ′
-# end
-
-# expected Fisher information matrix
-# @inbounds function update_ℐ!(ℐ, μ, α, β)
-#     β⁻¹ = 1/β
-#
-#     ###################
-#     # diagonal elements
-#     ###################
-#
-#     # Fill ℐ_μ with a dummy value of 1 if β ≤ 1, as Γ(2-β⁻¹)
-#     # can't be evaluated at β = 1. Doesn't matter anyway, as
-#     # μ is not updated via Newton iteration when β ≤ 1.
-#     ℐ_μ = β > 1 ? β^2/(Γ(β⁻¹)*α^2)*Γ(2-β⁻¹) : 1.0
-#     ℐ_α = β/α^2
-#
-#     # diagonal element for β is a long expression; split calculation
-#     c1 = β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1)
-#     c2 = β⁻¹^2*ψ₀(1 + β⁻¹)
-#     c3 = β⁻¹^2* Γ(2 + β⁻¹)/Γ(β⁻¹) * (ψ₀(2 + β⁻¹)^2 + ψ₁(2 + β⁻¹))
-#
-#     ℐ_β = c1^2 - 2*c1*c2 + c3
-#
-#     # lone nonzero off-diagonal element
-#     ℐ_αβ = β⁻¹^2/α*ψ₀(1 + β⁻¹) -
-#            β⁻¹/α*(1 + β⁻¹)*ψ₀(2 + β⁻¹)
-#
-#     fill!(ℐ, 0.0)
-#     ℐ[1, 1] = ℐ_μ
-#     ℐ[2, 2] = ℐ_α
-#     ℐ[3, 3] = ℐ_β
-#     ℐ[2, 3] = ℐ[3, 2] = ℐ_αβ
-#     return ℐ
-# end
-
-function guess_initial_params(x::AbstractVector{T}) where {T <: Real}
+function guess_initial_params(x::AbstractVector{<:Real})
     n = length(x)
     # following Varanasi & Aazhang (1989)
-
-    # Step 1: Get inital guesses for all parameters using moment matching
 
     # initial guesses for variance and mean (μ) and scale (α) come directly
     # from  1st & 2nd (central) sample moments
@@ -176,50 +129,25 @@ function guess_initial_params(x::AbstractVector{T}) where {T <: Real}
     # taking a log.
     c = log(moment(x, 4)/σ²^2)
 
-    # Must be equal to loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β).
-    # Use to find β₀ via precomputed lookup table.
-    i = searchsortedfirst(view(lookup_tbl, :, 2), c)
-    if i > length(lookup_tbl)
-        β = β_MAX
-    else
-        β = lookup_tbl[i, 1]
-    end
+    # ...c must be equal to loggamma(5/β) + loggamma(1/β) - 2*loggamma(3/β).
+    # Invert to find β via precomputed lookup table.
+    i = searchsortedfirst(view(β_lookup_tbl, :, 2), c)
+    β = i > length(β_lookup_tbl) ? β_MAX : β_lookup_tbl[i, 1]
 
-    # relation between scale parameter α and variance
+    # relation between scale parameter α and variance of the 
+    # GeneralizedNormal
     α = sqrt(σ²*Γ(1/β)/Γ(3/β))
 
-    return [μ, α, β]
+    # work in log-space for the parameters α, β
+    # that way, all optimization params are unbounded
+    return [μ, log(α), log(β)]
 end
 
-# gradient of (normalized) log-likelihood w.r.t. the parameters
-# μ, log_α, and log_β
-# function update_ℒ′!(ℒ′, x, μ, log_α, log_β)
-#     α = exp(log_α)
-#     β = exp(log_β)
-
-#     β⁻¹ = 1/β
-#     n = length(x)
-
-#     ℒ′[1] = β/α^β * sum(@~ @. sign(x - μ)*abs(x - μ)^(β-1))
-#     ℒ′[2] = exp(α) * (β/(α^(β+1)) * sum(@~  @. abs(x - μ)^β) - n/α)
-#     ℒ′[3] = exp(β) * (n*β⁻¹*(β⁻¹*ψ₀(β⁻¹) + 1) -
-#              sum(@~ @. (abs(x - μ)/α)^β*log(abs(x - μ)/α)))
-#     ℒ′ ./= n
-#     return ℒ′
-# end
-
 function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
-                 alg = :LN_NEWUOA,
-                 xtol_rel::Real = 1.0e-8,
-                 ftol_rel::Real = 1.0e-8) where {T <: Real}
-    n = length(x)
+                 alg = DEFAULT_NLOPT_ALG, kwargs...) where {T <: Real}
 
     # Step 1: Get inital guesses for all parameters using moment matching
     p₀ = guess_initial_params(x)
-
-    # work in log-space for the parameters α, β
-    # that way, all parameters are unbounded (between -Inf and +Inf)
-    p₀[2:3] .= log.(p₀[2:3])
 
     y = similar(x)
     yβ = similar(x)
@@ -249,10 +177,13 @@ function fit_mle(::Type{<:GeneralizedNormal}, x::AbstractVector{T};
         return obj
     end
 
+    # Step 2: Polish initial estimates by numerically maximizing log-likelihood
     opt = Opt(alg, 3)
     opt.max_objective = objective
-    opt.xtol_rel = xtol_rel
-    opt.ftol_rel = ftol_rel
+    params = merge(DEFAULT_NLOPT_OPTIONS, kwargs)
+    for (k, v) in pairs(params)
+        setproperty!(opt, Symbol(k), v)
+    end
 
     _, p, ret = optimize(opt, p₀)
     if ret ∉ (:SUCCESS, :XTOL_REACHED, :FTOL_REACHED)

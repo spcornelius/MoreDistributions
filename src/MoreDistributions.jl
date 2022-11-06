@@ -116,6 +116,7 @@ export
     expected_logdet,    # expected logarithm of random matrix determinant
     gradlogpdf          # gradient (or derivative) of logpdf(d,x) wrt x
 
+include("config.jl")
 include("generalizednormal.jl")
 include("bodytail.jl")
 
