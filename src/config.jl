@@ -4,4 +4,4 @@ const DEFAULT_NLOPT_OPTIONS = Dict(
     "initial_step" => 1e-6
 )
 
-const DEFAULT_NLOPT_ALG = :LN_SBPLX
+const DEFAULT_NLOPT_ALG = :LN_NEWUOA_BOUND
